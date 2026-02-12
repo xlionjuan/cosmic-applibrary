@@ -33,6 +33,10 @@ build-release *args: (build-debug '--release' args)
 # Compiles release profile with vendored dependencies
 build-vendored *args: vendor-extract (build-release '--frozen --offline' args)
 
+# Compiles and runs a standalone instance
+run *args: build-release
+    {{bin-src}} run {{args}}
+
 # Runs a clippy check
 check *args:
     cargo clippy --all-features {{args}} -- -W clippy::pedantic

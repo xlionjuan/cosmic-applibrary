@@ -146,6 +146,8 @@ pub enum ApplicationsTasks {
     Input { input: Option<String> },
     #[clap(about = "Close app-library if open")]
     Close,
+    #[clap(about = "Run a standalone instance (not single-instance)")]
+    Run,
 }
 
 impl Display for ApplicationsTasks {
@@ -163,17 +165,22 @@ impl FromStr for ApplicationsTasks {
 }
 
 pub fn run() -> cosmic::iced::Result {
-    cosmic::app::run_single_instance::<CosmicAppLibrary>(
-        Settings::default()
-            .antialiasing(true)
-            .client_decorations(true)
-            .debug(false)
-            .default_text_size(16.0)
-            .scale_factor(1.0)
-            .no_main_window(true)
-            .exit_on_close(false),
-        Args::parse(),
-    )
+    let args = Args::parse();
+    let settings = Settings::default()
+        .antialiasing(true)
+        .client_decorations(true)
+        .debug(false)
+        .default_text_size(16.0)
+        .scale_factor(1.0)
+        .no_main_window(true)
+        .exit_on_close(false);
+
+    // Use standalone run if requested, otherwise use single-instance
+    if matches!(args.subcommand, Some(ApplicationsTasks::Run)) {
+        cosmic::app::run::<CosmicAppLibrary>(settings, args)
+    } else {
+        cosmic::app::run_single_instance::<CosmicAppLibrary>(settings, args)
+    }
 }
 
 pub struct AppSource(PathSource);
@@ -387,6 +394,7 @@ impl CosmicAppLibrary {
 
 #[derive(Clone, Debug)]
 enum Message {
+    Activate,
     UpdateFocused(Option<widget::Id>),
     InputChanged(String),
     KeyboardNav(keyboard_nav::Action),
@@ -607,6 +615,9 @@ impl cosmic::Application for CosmicAppLibrary {
 
     fn update(&mut self, message: Message) -> Task<Self::Message> {
         match message {
+            Message::Activate => {
+                return self.activate();
+            }
             Message::UpdateFocused(id) => {
                 self.focused_id = id;
                 let i = self
@@ -1100,6 +1111,8 @@ impl cosmic::Application for CosmicAppLibrary {
                         Task::none()
                     }
                     ApplicationsTasks::Close => self.hide(),
+                    // Run is handled at startup, not via D-Bus
+                    ApplicationsTasks::Run => Task::none(),
                 }
             }
             _ => Task::none(),
@@ -1719,7 +1732,7 @@ impl cosmic::Application for CosmicAppLibrary {
         &mut self.core
     }
 
-    fn init(mut core: Core, _flags: Args) -> (Self, iced::Task<cosmic::Action<Self::Message>>) {
+    fn init(mut core: Core, flags: Args) -> (Self, iced::Task<cosmic::Action<Self::Message>>) {
         core.set_keyboard_nav(false);
         let helper = AppLibraryConfig::helper();
 
@@ -1757,6 +1770,13 @@ impl cosmic::Application for CosmicAppLibrary {
             ..Default::default()
         };
 
-        (self_, Task::none())
+        // Auto-activate when running in standalone mode
+        let task = if matches!(flags.subcommand, Some(ApplicationsTasks::Run)) {
+            Task::done(cosmic::Action::App(Message::Activate))
+        } else {
+            Task::none()
+        };
+
+        (self_, task)
     }
 }
