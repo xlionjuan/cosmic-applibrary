@@ -17,6 +17,10 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install libxkbcommon-dev
       - name: Create blank versions of configured file
         run: echo -e "" >> src/config.rs
       - name: Run cargo fmt
