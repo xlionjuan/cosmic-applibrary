@@ -1,6 +1,6 @@
 on:
   push:
-    branches: [master_jammy]
+    branches: master
   pull_request:
 
 name: CI
@@ -21,3 +21,5 @@ jobs:
         run: echo -e "" >> src/config.rs
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
+      - name: Run cargo check --locked
+        run: cargo check --locked
