@@ -7,12 +7,13 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use cosmic::widget::reorderable_flex_row;
 use cosmic::core::Auto;
 use cosmic::iced::platform_specific::shell::commands::layer_surface::set_padding;
 use cosmic::iced::runtime::platform_specific::wayland::layer_surface::IcedMargin;
 use cosmic::iced::runtime::{Action, platform_specific, task};
 use cosmic::iced::window;
+use cosmic::widget::reorderable_flex_row;
+use cosmic::widget::space::horizontal;
 use cosmic::{
     Element,
     app::{Core, CosmicFlags, Settings, Task},
@@ -356,12 +357,7 @@ impl CosmicAppLibrary {
                 }),
                 overlap_notify(SurfaceId::RESERVED, true),
                 fetch_gpus,
-            ])
-            .chain(text_input::focus(SEARCH_ID.clone()))
-            .chain(
-                iced_runtime::task::widget(find_focused())
-                    .map(|id| cosmic::Action::App(Message::UpdateFocused(Some(id)))),
-            );
+            ]);
         }
         Task::none()
     }
@@ -617,7 +613,6 @@ impl CosmicAppLibrary {
         self.hand_over.clear();
 
         iced::Task::batch(vec![
-            text_input::focus(SEARCH_ID.clone()),
             destroy_popup(*MENU_ID),
             destroy_layer_surface(*NEW_GROUP_WINDOW_ID),
             destroy_layer_surface(*DELETE_GROUP_WINDOW_ID),
@@ -787,35 +782,41 @@ impl cosmic::Application for CosmicAppLibrary {
                 self.search_value = value;
                 return self.filter_apps();
             }
-            Message::Layer(e, id) => match e {
-                LayerEvent::Focused => {
-                    if self.menu.is_none() {
-                        if id == SurfaceId::RESERVED {
-                            return text_input::focus(SEARCH_ID.clone());
-                        } else if id == *DELETE_GROUP_WINDOW_ID {
-                            return button::focus(SUBMIT_DELETE_ID.clone());
-                        } else if id == *NEW_GROUP_WINDOW_ID {
-                            return text_input::focus(NEW_GROUP_ID.clone());
+            Message::Layer(e, id) => {
+                match e {
+                    LayerEvent::Focused => {
+                        if self.menu.is_none() {
+                            if id == SurfaceId::RESERVED {
+                                return text_input::focus(SEARCH_ID.clone()).chain(
+                                    iced_runtime::task::widget(find_focused()).map(|id| {
+                                        cosmic::Action::App(Message::UpdateFocused(Some(id)))
+                                    }),
+                                );
+                            } else if id == *DELETE_GROUP_WINDOW_ID {
+                                return button::focus(SUBMIT_DELETE_ID.clone());
+                            } else if id == *NEW_GROUP_WINDOW_ID {
+                                return text_input::focus(NEW_GROUP_ID.clone());
+                            }
                         }
                     }
-                }
-                LayerEvent::Unfocused => {
-                    self.last_hide = Some(Instant::now());
-                    if matches!(self.surface_state, SurfaceState::Visible)
-                        && id == SurfaceId::RESERVED
-                        && self.menu.is_none()
-                        && self.new_group.is_none()
-                        && self.group_to_delete.is_none()
-                    {
-                        return self.hide();
+                    LayerEvent::Unfocused => {
+                        self.last_hide = Some(Instant::now());
+                        if matches!(self.surface_state, SurfaceState::Visible)
+                            && id == SurfaceId::RESERVED
+                            && self.menu.is_none()
+                            && self.new_group.is_none()
+                            && self.group_to_delete.is_none()
+                        {
+                            return self.hide();
+                        }
                     }
+                    LayerEvent::Done if id == SurfaceId::RESERVED => {
+                        // no need for commands here
+                        _ = self.hide();
+                    }
+                    _ => {}
                 }
-                LayerEvent::Done if id == SurfaceId::RESERVED => {
-                    // no need for commands here
-                    _ = self.hide();
-                }
-                _ => {}
-            },
+            }
             Message::Hide => {
                 return self.hide();
             }
