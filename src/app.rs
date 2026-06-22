@@ -11,9 +11,9 @@ use cosmic::iced::platform_specific::shell::commands::layer_surface::set_padding
 use cosmic::iced::runtime::platform_specific::wayland::layer_surface::IcedMargin;
 use cosmic::iced::runtime::{Action, platform_specific, task};
 use cosmic::iced::window;
-use cosmic::surface::action::{LiveSettings, app_layer_shell};
-use cosmic::widget::reorderable_flex_row;
-use cosmic::widget::space::horizontal;
+use cosmic::surface::action::{LiveSettings, app_layer_shell, simple_popup};
+use cosmic::widget::menu::menu_column::MenuColumn;
+use cosmic::widget::{ListColumn, reorderable_flex_row};
 use cosmic::{
     Element,
     app::{Core, CosmicFlags, Settings, Task},
@@ -1003,7 +1003,11 @@ impl cosmic::Application for CosmicAppLibrary {
                     return destroy_popup(*MENU_ID);
                 } else {
                     self.menu = Some(i);
-                    return commands::popup::get_popup(SctkPopupSettings {
+                    let offset = self.scroll_offset as i32;
+                    return cosmic::surface::surface_task(simple_popup(
+                        || LiveSettings::default(),
+                        move || {
+                            SctkPopupSettings {
                         parent: SurfaceId::RESERVED,
                         id: *MENU_ID,
                         positioner: SctkPositioner {
@@ -1011,7 +1015,7 @@ impl cosmic::Application for CosmicAppLibrary {
                             size_limits: Limits::NONE.min_width(1.0).min_height(1.0).max_width(300.0).max_height(800.0),
                             anchor_rect: Rectangle {
                                 x: rect.x as i32,
-                                y: rect.y as i32 - self.scroll_offset as i32,
+                                y: rect.y as i32 - offset,
                                 width: rect.width as i32,
                                 height: rect.height as i32,
                             },
@@ -1025,7 +1029,10 @@ impl cosmic::Application for CosmicAppLibrary {
                         parent_size: None,
                         close_with_children: true,
                         input_zone: None,
-                    });
+                    }
+                        },
+                        None::<Box<fn() -> cosmic::Element<'static, cosmic::Action<Message>>>>,
+                    ));
                 }
             }
             Message::CloseContextMenu => {
@@ -1347,23 +1354,7 @@ impl cosmic::Application for CosmicAppLibrary {
             }
 
             return autosize(
-                container(scrollable(Column::with_children(list_column)))
-                    .padding(1)
-                    .class(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background(theme.transparent).component;
-                        container::Style {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(iced::Background::Color(component.base.into())),
-                            border: Border {
-                                radius: cosmic.radius_s().map(|x| x + 1.0).into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    })),
+                container(scrollable(MenuColumn::with_children(list_column))).padding(1),
                 MENU_AUTOSIZE_ID.clone(),
             )
             .max_height(800.)
