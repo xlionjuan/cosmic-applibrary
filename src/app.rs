@@ -7,12 +7,15 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use cosmic::iced::event::wayland::OutputEvent;
 use cosmic::iced::platform_specific::shell::commands::layer_surface::set_padding;
+use cosmic::iced::runtime::platform_specific::wayland::CornerRadius;
 use cosmic::iced::runtime::platform_specific::wayland::layer_surface::IcedMargin;
 use cosmic::iced::runtime::{Action, platform_specific, task};
 use cosmic::iced::window;
-use cosmic::surface::action::{LiveSettings, app_layer_shell, simple_popup};
+use cosmic::surface::action::{LiveSettings, app_layer_shell, simple_layer_shell, simple_popup};
 use cosmic::widget::menu::menu_column::MenuColumn;
+use cosmic::widget::space::horizontal;
 use cosmic::widget::{ListColumn, reorderable_flex_row};
 use cosmic::{
     Element,
@@ -268,6 +271,7 @@ struct CosmicAppLibrary {
     hand_over: String,
     group_keys: Vec<u64>,
     next_group_key: u64,
+    dummy_id: Option<window::Id>,
 }
 
 impl Default for CosmicAppLibrary {
@@ -305,6 +309,7 @@ impl Default for CosmicAppLibrary {
             hand_over: String::default(),
             group_keys: Default::default(),
             next_group_key: Default::default(),
+            dummy_id: None,
         }
     }
 }
@@ -327,6 +332,39 @@ async fn try_get_gpus() -> Option<Vec<Gpu>> {
 }
 
 impl CosmicAppLibrary {
+    fn create_dummy_layer_surface(&mut self) -> Task<Message> {
+        self.needs_clear = true;
+        let id = window::Id::unique();
+        self.dummy_id = Some(id);
+        Task::batch(vec![
+            cosmic::surface::surface_task(simple_layer_shell::<Message>(
+                || LiveSettings {
+                    padding: Some(IcedMargin::default()),
+                    corners: Some(CornerRadius::default()),
+                    blur: Some(false),
+                },
+                move || {
+                    SctkLayerSurfaceSettings {
+                    id,
+                    layer: wlr_layer::Layer::Bottom,
+                    keyboard_interactivity: wlr_layer::KeyboardInteractivity::None,
+                    input_zone: Some(Vec::new()),
+                    anchor: wlr_layer::Anchor::TOP,
+                    output:
+                        cosmic::iced::runtime::platform_specific::wayland::layer_surface::IcedOutput::Active,
+                    namespace: "cosmic_launcher_dummy".into(),
+                    margin: IcedMargin::default(),
+                    size: Some((Some(1200), Some(200))),
+                    exclusive_zone: -1,
+                    size_limits: Limits::NONE,
+                }
+                },
+                None::<fn() -> Element<'static, cosmic::Action<Message>>>,
+            )),
+            overlap_notify(id, true),
+        ])
+    }
+
     pub fn activate(&mut self) -> Task<Message> {
         if matches!(self.surface_state, SurfaceState::Visible) {
             return self.hide();
@@ -494,6 +532,7 @@ enum Message {
     AppListConfig(AppListConfig),
     Opened(Size, SurfaceId),
     Overlap(OverlapNotifyEvent),
+    Output(OutputEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -673,6 +712,13 @@ impl cosmic::Application for CosmicAppLibrary {
         match message {
             Message::Activate => {
                 return self.activate();
+            }
+            Message::Output(event) => {
+                if matches!(event, OutputEvent::Created(_) | OutputEvent::InfoUpdate(_))
+                    && self.dummy_id.is_none()
+                {
+                    return self.create_dummy_layer_surface();
+                }
             }
             Message::UpdateFocused(id) => {
                 self.focused_id = id;
@@ -1176,7 +1222,9 @@ impl cosmic::Application for CosmicAppLibrary {
             }
             Message::Opened(size, window_id) => {
                 let mut tasks = Vec::new();
-                tasks.push(overlap_notify(SurfaceId::RESERVED, true));
+                if self.dummy_id.is_none() {
+                    tasks.push(overlap_notify(SurfaceId::RESERVED, true));
+                }
                 if window_id == SurfaceId::RESERVED {
                     if matches!(self.surface_state, SurfaceState::WaitingToBeShown) {
                         self.surface_state = SurfaceState::Visible;
@@ -1249,6 +1297,9 @@ impl cosmic::Application for CosmicAppLibrary {
     }
 
     fn view_window<'a>(&'a self, id: SurfaceId) -> Element<'a, Message> {
+        if self.dummy_id.is_some_and(|dummy| dummy == id) {
+            return horizontal().into();
+        }
         let Spacing {
             space_none,
             space_xxs,
@@ -1788,6 +1839,9 @@ impl cosmic::Application for CosmicAppLibrary {
                 cosmic::iced::Event::Window(WindowEvent::Opened { position: _, size }) => {
                     Some(Message::Opened(size, id))
                 }
+                cosmic::iced::Event::PlatformSpecific(PlatformSpecific::Wayland(
+                    wayland::Event::Output(event, _),
+                )) => Some(Message::Output(event)),
                 _ => None,
             }),
             keyboard_nav::subscription().map(Message::KeyboardNav),
@@ -1804,8 +1858,6 @@ impl cosmic::Application for CosmicAppLibrary {
     }
 
     fn init(mut core: Core, flags: Args) -> (Self, iced::Task<cosmic::Action<Self::Message>>) {
-        let dummy_id = window::Id::unique();
-
         core.set_keyboard_nav(false);
         core.set_app_type(cosmic::core::AppType::System);
 
@@ -1825,7 +1877,7 @@ impl cosmic::Application for CosmicAppLibrary {
         let scrollable_id = Id::new("group-home");
         let group_count = config.groups.len() as u64;
         let group_keys: Vec<u64> = (0..group_count).collect();
-        let self_ = Self {
+        let mut self_ = Self {
             locale: std::env::var("LANG")
                 .ok()
                 .and_then(|l| l.split(".").next().map(str::to_string)),
@@ -1848,19 +1900,7 @@ impl cosmic::Application for CosmicAppLibrary {
         } else {
             Task::none()
         };
-
-        (self_, Task::batch([get_layer_surface(SctkLayerSurfaceSettings {
-                id: dummy_id,
-                layer: wlr_layer::Layer::Bottom,
-                keyboard_interactivity: wlr_layer::KeyboardInteractivity::None,
-                input_zone: Some(Vec::new()),
-                anchor: wlr_layer::Anchor::empty(),
-                output: cosmic::iced::runtime::platform_specific::wayland::layer_surface::IcedOutput::Active,
-                namespace: "cosmic_launcher_dummy".into(),
-                margin: IcedMargin::default(),
-                size: Some((Some(6), Some(6))),
-                exclusive_zone: -1,
-                size_limits: Limits::NONE,
-            }), task]))
+        let dummy_task = self_.create_dummy_layer_surface();
+        (self_, Task::batch([dummy_task, task]))
     }
 }
